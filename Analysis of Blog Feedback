@@ -1,0 +1,569 @@
+########################
+## 00. INITIALISATION ##
+########################
+
+rm(list = ls(all = TRUE)) #Clear workspace
+
+#Install packages
+# install.packages('tidyverse')
+# install.packages('randomForest')
+# install.packages('rpart')
+# install.packages('rpart.plot')
+# install.packages('rattle')
+# install.packages('corrplot')
+# install.packages('ModelMetrics')
+# install.packages("caret", dependencies = c("Depends", "Suggests"))
+# install.packages('beepr')
+
+#Load Packages
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(randomForest)   # classification algorithm
+library(rpart)          # Decision tree algorithm
+library(rpart.plot)     # 
+library(rattle)
+library(RColorBrewer)	
+library(ggthemes)
+library(corrplot)
+library(caret)
+library(car)
+library(leaps)
+library(beepr)
+
+#setwd("~/Adrian's Folder/40. Education/10. Data Science/40. R/Case Study - Blog Comments/1. Input Data")
+options(max.print = 2000)
+
+#####################
+## 01. IMPORT DATA ##
+#####################
+
+#Import Traing Data
+train <- read.csv("blogData_train.csv",header=FALSE)
+col_names <- read.csv("col_names.csv",header=FALSE) #List of Names created in Excel
+colnames(train) <- col_names$V1
+
+#Import Test data and Concatenate
+ldf <- list()  # creates a list
+listcsv <- list.files(pattern ="blogData_test.*csv") # creates the list of all the csv files in the directory
+
+for (k in 1:length(listcsv)){
+  ldf[[k]] <- read.csv(listcsv[k],header=FALSE)
+  colnames(ldf[[k]]) <- col_names$V1
+  ldf[[k]]$BasetimeDate <- gsub(pattern="(blogData_test-2012.)|(.01_00.csv)|(.00_00.csv)","",listcsv[k])
+  # test<-bind_rows(test,ldf[[k]])
+  }
+
+test <- do.call("rbind", ldf)
+
+##########################
+## 02. INVESTIGATE DATA ##
+##########################
+
+#Look at sample of data
+head(train)
+
+#Get summary statistics
+summary(train)
+
+#Get info about target variable
+table(train$NUM_COMM_NEXT_24)
+summary(train$NUM_COMM_NEXT_24)
+
+g <- ggplot(train, aes(x=NUM_COMM_NEXT_24)) +
+  geom_bar() +
+  theme_few(); g
+h <- g +
+    scale_x_continuous(breaks=seq(0,20,1),limits=c(-1,21)) +
+    scale_y_continuous(breaks=seq(0,30000,5000));h
+i <- g + 
+  scale_x_continuous(breaks=c(20,seq(50,max(train$NUM_COMM_NEXT_24),
+                                        50
+                                        )
+                              )
+                     ,limits=c(20,max(train$NUM_COMM_NEXT_24))) +
+  scale_y_continuous(breaks=seq(0,100,10),limits=c(-1,101));i
+
+# Tails off quite a bit after 100
+j <- g + xlim(19,101);j
+k <- g + xlim(99,max(train$NUM_COMM_NEXT_24));k
+#Graph shows huge proportion of zeros, tails off quite a lot, not much data beyond 
+f=ggplot(train,aes(x=as.numeric(rownames(train)),y=NUM_COMM_NEXT_24))+geom_point()
+f
+f + coord_cartesian(xlim = c(10000,13000))
+
+#Looks like we have some outliers above 1000. Let's remove them. 
+train <- train[train$NUM_COMM_NEXT_24<=1000,]
+
+#Lets look at training data
+t <- ggplot(test,aes(x=NUM_COMM_NEXT_24)) +
+  geom_bar() +
+  theme_few(); t
+
+t2=ggplot(test,aes(x=as.numeric(rownames(test)),y=NUM_COMM_NEXT_24))+geom_point()
+t2
+
+
+#Create labels for groups of predictors
+basic_src <- colnames(train)[1:50]
+basic_post <- colnames(train[51:62])
+basic <- c(basic_src, basic_post)
+bag <- colnames(train[63:262])
+wday <- colnames(train[263:276])
+par <- colnames(train[277:280])
+allvars <- colnames(train[1:280])
+
+#Look at train_basic_src features
+summary(train[basic_src])
+summary(train[basic_post])
+
+summary(train[bag])
+summary(train[bag[1:100]])
+summary(train[bag[101:200]])
+#Results seem quite sparse for bag of word predictors...
+
+summary(train[wday])
+summary(train[par])
+
+## 03. Feature Engineering ##
+names(train_wday)
+
+#Create categorical weekday for BaseTime and Post
+train$BT_WKDAY[train$BT_FLAG_MON == 1]        <- '1) MON'
+train$BT_WKDAY[train$BT_FLAG_TUE == 1]        <- '2) TUE' 
+train$BT_WKDAY[train$BT_FLAG_WED == 1]        <- '3) WED' 
+train$BT_WKDAY[train$BT_FLAG_THU == 1]        <- '4) THU' 
+train$BT_WKDAY[train$BT_FLAG_FRI == 1]        <- '5) FRI' 
+train$BT_WKDAY[train$BT_FLAG_SAT == 1]        <- '6) SAT' 
+train$BT_WKDAY[train$BT_FLAG_SUN == 1]        <- '7) SUN' 
+
+train$POST_WKDAY[train$POST_FLAG_MON == 1]        <- '1) MON'
+train$POST_WKDAY[train$POST_FLAG_TUE == 1]        <- '2) TUE' 
+train$POST_WKDAY[train$POST_FLAG_WED == 1]        <- '3) WED' 
+train$POST_WKDAY[train$POST_FLAG_THU == 1]        <- '4) THU' 
+train$POST_WKDAY[train$POST_FLAG_FRI == 1]        <- '5) FRI' 
+train$POST_WKDAY[train$POST_FLAG_SAT == 1]        <- '6) SAT' 
+train$POST_WKDAY[train$POST_FLAG_SUN == 1]        <- '7) SUN' 
+
+ggplot(data=train,aes(x=BT_WKDAY,y=NUM_COMM_NEXT_24)) + geom_boxplot(alpha=0.1)
+ggplot(data=train,aes(x=POST_WKDAY,y=NUM_COMM_NEXT_24)) + geom_boxplot(alpha=0.1)
+train <- subset(train, ,-c(BT_WKDAY,POST_WKDAY))
+# #Create source id as sum of all source KPIs
+# train$source_id = train[,1]+train[,2]
+# table(train$source_id)
+# 
+# train %>% mutate(src_id=rowSums(.[1:2]))
+
+## 04. MODELLING ##
+
+# Investigate correlation/multicollinearity on all predictors
+
+# #Remove zero variance predictors
+zv <- apply(train, 2, function(x) length(unique(x)) == 1)
+zvp <- colnames(train[,zv]);zvp
+nzv <- nearZeroVar(train,saveMetrics=TRUE); nzv
+nzvp <- colnames(train[,nzv$nzv]);nzvp
+train2 <- train[,!nzv$nzv]
+colnames(train2)
+#Note, all parent predictors have been removed, but let's retain NUM_PARENTS
+train3 <- train[names(train) %in% c(names(train2),"NUM_PARENTS")]
+
+#Get list of highly correlated variables
+corM <- cor(train3[,1:ncol(train3[!names(train3) %in% "NUM_COMM_NEXT_24"])],use="complete.obs")
+highlyCorrelated <- findCorrelation(corM, cutoff=(0.75),verbose = FALSE)
+print(highlyCorrelated)
+
+important_var=colnames(train3[,-highlyCorrelated])
+important_var<-important_var[!important_var %in% "NUM_COMM_NEXT_24"]
+important_var
+removed_var = colnames(train3[,highlyCorrelated])
+removed_var
+
+train3b <- train3[c(important_var,"NUM_COMM_NEXT_24")]
+
+#Identify linear dependencies
+combinfo <- findLinearCombos(train3b);combinfo
+
+l1<-combinfo$linearCombos[[1]]
+l2<-combinfo$linearCombos[[2]]
+#l3<-combinfo$linearCombos[[3]]
+remove <- colnames(train3b[,combinfo$remove]);remove
+#Also remove BT_FLAG_SUN
+remove <- c(remove,"BT_FLAG_SUN")
+train4<-train3b[!names(train3b) %in% remove]
+
+#4.1 Multiple Linear Regression #
+
+#Try everything, see what happens
+lm.fit1 <- lm(NUM_COMM_NEXT_24~.,data=train4)
+summary(lm.fit1)
+#Lots of insignificant factors at p=0.05. Adj. R2 of 35% isn't great...
+
+#Compute actual rank by date
+test$rank_act <- ave(test$NUM_COMM_NEXT_24,
+                     test$BasetimeDate,
+                     FUN=function(x) 
+                       match(1:length(x),order(x,decreasing=TRUE)
+                             )
+                     )
+
+rank_thresh <- 10
+#Create binary classification if it is in top x blogs by label
+test$toprank_act <- ifelse(test$rank_act <= rank_thresh,1,0)
+
+#Set up function for fitting
+myfit <- function(data,xvars,y,funcs) {
+  data2 <- data[, names(data) %in% c(xvars,"NUM_COMM_NEXT_24")]
+  trainX <- data2[,-match("NUM_COMM_NEXT_24",colnames(data2))]
+  trainY <- y
+
+  set.seed(123)
+  start = Sys.time()
+  ctrl <- rfeControl(functions=funcs, method = "cv", number = 10, verbose = FALSE)
+  print(ncol(trainX))
+  model <- 
+  rfe(x = trainX, y = trainY, method="lm", sizes=c(1:10,15,seq(20,70,10)),
+      rfeControl = ctrl
+      )
+  end = Sys.time()
+  print(end - start )
+  return(model)
+  beep()
+}
+
+mytest <- function(model,dataname,modeltype) {
+  test$pred <- as.vector(predict(model,test,type="response"))
+  test$rank_pred <- ave(test$pred,
+                         test$BasetimeDate,
+                         FUN=function(x) 
+                           match(1:length(x),order(x,decreasing=TRUE)
+                           )
+                        )
+
+  test$toprank_pred <- ifelse(test$rank_pred <= rank_thresh,1,0)
+  test$toprank_pred_true <- ifelse(test$toprank_act + test$toprank_pred == 2,1,0)
+  sum(test$toprank_pred_true)
+
+  result = test %>% 
+    group_by(BasetimeDate) %>%
+    summarise(true_pos = sum(toprank_pred_true)) %>%
+    summarise(avg_true_pos = mean(true_pos))
+  
+  data_name = dataname
+  model_name = modeltype
+  numvars <- length(predictors(model))
+  result <- data.frame(model_name,data_name,numvars,result)
+  return(result)
+}
+# Model 1a: Linear Model, basic predictors only
+lm1.fit = myfit(train4,c(basic),train4$NUM_COMM_NEXT_24,lmFuncs)
+res_lm1 = mytest(lm1.fit,"Basic","Linear Model"); res_lm1
+# Model 1b: Linear Model, basic & wday predictors only
+lm2.fit = myfit(train4,c(basic,wday),train4$NUM_COMM_NEXT_24,lmFuncs)
+res_lm2 = mytest(lm2.fit,"Basic+WDay","Linear Model"); res_lm2
+# Model 1c: Linear Model, basic & wday & par predictors only
+lm3.fit = myfit(train4,c(basic,wday,par),train4$NUM_COMM_NEXT_24,lmFuncs)
+res_lm3 = mytest(lm3.fit,"Basic+WDay+Par","Linear Model"); res_lm3
+# Model 1d: Linear Model, basic & wday & par & bag of words predictors only
+lm4.fit = myfit(train4,c(basic,wday,par,bag),train4$NUM_COMM_NEXT_24,lmFuncs)
+res_lm4 = mytest(lm4.fit,"Basic+WDay+Par+Words","Linear Model"); res_lm4
+
+#4.2 GLM
+
+#Try plotting GLM
+llmfull.fit <-lm(log(NUM_COMM_NEXT_24+1)~.,data=train4)
+
+plot(llm.fit1,pch=16,which=1)
+
+summary(llmfull.fit) 
+#R squared 40% which is better than linear model
+
+res_llmfull = mytest(llmfull.fit,"Full","GLM"); res_llmfull
+#Getting average hit rate of 5.25 / 10
+
+# Model 2a: GLM, basic predictors only
+llm1.fit = myfit(train4,c(basic),log(1+train4$NUM_COMM_NEXT_24),lmFuncs)
+res_llm1 = mytest(llm1.fit,"Basic","Log Linear Model"); res_llm1
+# Model 2b: GLM, basic & wday predictors only
+llm2.fit = myfit(train4,c(basic,wday),log(1+train4$NUM_COMM_NEXT_24),lmFuncs)
+res_llm2 = mytest(llm2.fit,"Basic+WDay","Log Linear Model"); res_llm2
+# Model 2c: GLM, basic & wday & par predictors only
+llm3.fit = myfit(train4,c(basic,wday,par),log(1+train4$NUM_COMM_NEXT_24),lmFuncs)
+res_llm3 = mytest(llm3.fit,"Basic+WDay+Par","Log Linear Model"); res_llm3
+# Model 2d: GLM, basic & wday & par & bag of words predictors only
+llm4.fit = myfit(train4,c(basic,wday,par,bag),log(1+train4$NUM_COMM_NEXT_24),lmFuncs)
+res_llm4 = mytest(llm4.fit,"Basic+WDay+Par+Words","Log Linear Model"); res_llm4
+
+# 4.3 GLMs
+mean(trainY)
+var(trainY)
+#Mean much larger than variance, lets still try fit standard Poisson GLM
+
+#Model 3.0: 
+train4b <- train4[, names(train4) %in% c(allvars,"NUM_COMM_NEXT_24")]
+trainX <- train4b[,-match("NUM_COMM_NEXT_24",colnames(train4b))]
+trainY <- train4$NUM_COMM_NEXT_24
+
+eGrid <- expand.grid(.alpha = 1, .lambda = seq(0,1,0.2))
+
+tCtrl1=trainControl(method = "cv",number = 10) 
+
+Sys.time()
+set.seed(1)
+glm.fit <- train(x,y, method = "glmnet", family = "poisson",
+                 trControl = tCtrl1, tuneGrid = eGrid
+                 )
+Sys.time()
+beep()
+
+mytest2 <- function(model,dataname,modeltype) {
+  test$pred <- as.vector(predict(model,test,type="raw"))
+  test$rank_pred <- ave(test$pred,
+                        test$BasetimeDate,
+                        FUN=function(x) 
+                          match(1:length(x),order(x,decreasing=TRUE)
+                          )
+  )
+  
+  test$toprank_pred <- ifelse(test$rank_pred <= rank_thresh,1,0)
+  test$toprank_pred_true <- ifelse(test$toprank_act + test$toprank_pred == 2,1,0)
+  sum(test$toprank_pred_true)
+  
+  result = test %>% 
+    group_by(BasetimeDate) %>%
+    summarise(true_pos = sum(toprank_pred_true)) %>%
+    summarise(avg_true_pos = mean(true_pos))
+  
+  data_name = dataname
+  model_name = modeltype
+  numvars <- length(predictors(model))
+  result <- data.frame(model_name,data_name,numvars,result)
+  return(result)
+}
+glm.fit
+res_glmfull <- mytest2(glm.fit,"Basic+WDay+Par+Words","GLM"); res_glmfull
+#Rsquared quite bad, around 13%, but getting prediciton of 4.7.
+
+myGLMfit <- function(data,xvars,y,model) {
+  data2 <- data[, names(data) %in% c(xvars,"NUM_COMM_NEXT_24")]
+  trainX <- data2[,-match("NUM_COMM_NEXT_24",colnames(data2))]
+  trainY <- y
+  
+  eGrid <- expand.grid(.alpha = 1, .lambda = seq(0,1,0.2))
+  
+  tCtrl1=trainControl(method = "cv",number = 10) 
+  
+  set.seed(1)
+  model <- train(trainX,trainY, method = "glmnet", family = "poisson",
+                   trControl = tCtrl1, tuneGrid = eGrid
+  )
+  
+  return(model)
+}
+
+# Model 3a: GLM, basic predictors only
+glm1.fit = myGLMfit(train4,c(basic),train4$NUM_COMM_NEXT_24);glm1.fit
+res_glm1 = mytest2(glm1.fit,"Basic","GLM"); res_glm1
+# Model 3b: GLM, basic & wday predictors only
+glm2.fit = myGLMfit(train4,c(basic,wday),train4$NUM_COMM_NEXT_24);glm2.fit
+res_glm2 = mytest2(glm2.fit,"Basic+WDay","GLM"); res_glm2
+# Model 3c: GLM, basic & wday & par predictors only
+glm3.fit = myGLMfit(train4,c(basic,wday,par),train4$NUM_COMM_NEXT_24)
+res_glm3 = mytest2(glm3.fit,"Basic+WDay+Par","GLM"); res_glm3
+# Model 3d: GLM, basic & wday & par & bag of words predictors only
+glm4.fit = myGLMfit(train4,c(basic,wday,par,bag),train4$NUM_COMM_NEXT_24)
+res_glm4 = mytest2(glm4.fit,"Basic+WDay+Par+Words","GLM"); res_glm4
+
+# 4.4 Decision Tree
+train4b <- train4[, names(train4) %in% c(allvars,"NUM_COMM_NEXT_24")]
+trainX <- train4[,-match("NUM_COMM_NEXT_24",colnames(train4b))]
+trainY <- train4$NUM_COMM_NEXT_24
+
+set.seed(50)
+
+tCtrltree=trainControl(
+  method = "cv",
+  number = 10
+)
+
+start=Sys.time()
+rpart.fit <- train(trainX,trainY,
+                   method = "rpart",
+                   trControl = tCtrltree,
+                   tuneLength = 50
+)
+End=Sys.time()
+print(End - start)
+beep()
+
+#Tree results
+predictors(rpart.fit)
+
+#Plot the tre
+fancyRpartPlot(rpart.fit$finalModel,cex=0.55)
+
+#Variable Importance
+rpart.VarImp <- varImp(rpart.fit,scale = FALSE)
+plot(rpart.VarImp,Main = "blah")
+
+#Predictions
+test$pred_rpart <- predict(rpart.fit,test,type="raw");test$pred_rpart
+test$rank_pred_rpart <- ave(test$pred_rpart,test$BasetimeDate,FUN=function(x) match(1:length(x),order(x,decreasing=TRUE)));
+test$toprank_pred_rpart <- ifelse(test$rank_pred_rpart <= rank_thresh,1,0)
+test$toprank_pred_rpart_true <- ifelse(test$toprank_act + test$toprank_pred_rpart == 2,1,0)
+sum(test$toprank_pred_rpart_true)
+
+res_rpart = test %>% 
+  group_by(BasetimeDate) %>%
+  summarise(true_pos_rpart = sum(toprank_pred_rpart_true)) %>%
+  summarise(avg_true_pos_rpart = mean(true_pos_rpart))
+res_rpart
+
+mytreefit <- function(data,xvars,y,model) {
+  data2 <- data[, names(data) %in% c(xvars,"NUM_COMM_NEXT_24")]
+  trainX <- data2[,-match("NUM_COMM_NEXT_24",colnames(data2))]
+  trainY <- y
+  
+  tCtrltree=trainControl(method = "cv",number = 10)
+  start=Sys.time()
+  model <- train(trainX,trainY,
+                     method = "rpart",
+                     trControl = tCtrltree,
+                     tuneLength = 50
+  )
+  End=Sys.time()
+  print(End - start)
+  return(model)
+}
+
+# Model 4a: tree, basic predictors only
+tree1.fit = mytreefit(train4,c(basic),train4$NUM_COMM_NEXT_24);tree1.fit
+res_tree1 = mytest2(tree1.fit,"Basic","Decision Tree"); res_tree1
+# Model 4b: tree, basic & wday predictors only
+tree2.fit = mytreefit(train4,c(basic,wday),train4$NUM_COMM_NEXT_24);tree2.fit
+res_tree2 = mytest2(tree2.fit,"Basic+WDay","Decision Tree"); res_tree2
+# Model 4c: tree, basic & wday & par predictors only
+tree3.fit = mytreefit(train4,c(basic,wday,par),train4$NUM_COMM_NEXT_24)
+res_tree3 = mytest2(tree3.fit,"Basic+WDay+Par","Decision Tree"); res_tree3
+# Model 4d: tree, basic & wday & par & bag of words predictors only
+tree4.fit = mytreefit(train4,c(basic,wday,par,bag),train4$NUM_COMM_NEXT_24)
+res_tree4 = mytest2(tree4.fit,"Basic+WDay+Par+Words","Decision Tree"); res_tree4
+
+res_total <- rbind(res_lm1, res_lm2, res_lm3,res_lm4,
+                   res_llm1,res_llm2,res_llm3,res_llm4,
+                   res_glm1,res_glm2,res_glm3,res_glm4,
+                   res_tree1,res_tree2,res_tree3,res_tree4
+                   )
+
+# 5 Final Additional Outputs and Summaries
+
+#5.1 Plots about the data
+g <- ggplot(train, aes(x=NUM_COMM_NEXT_24)) +
+  geom_bar(fill='blue') +
+  theme_few() +
+   xlab('# Comments in Next 24 Hours') +
+  ylab('Number of Blog Posts')
+g
+
+h <- g +
+  scale_x_continuous(breaks=seq(0,20,1),limits=c(-1,21)) +
+  scale_y_continuous(breaks=seq(0,35000,5000)) +
+  ggtitle('Distribution of Comments in Next 24 Hours')
+h
+i <- g + 
+  scale_x_continuous(breaks=c(20,seq(50,max(train$NUM_COMM_NEXT_24),50))
+                     ,limits=c(20,max(train$NUM_COMM_NEXT_24))
+                     ) +
+  scale_y_continuous(breaks=seq(0,100,10),limits=c(-1,101));i
+
+#5.2 Model Results
+
+#5.2.1 Linear Models 
+
+#Get coefficients
+train4b <- train4[, names(train4) %in% c(predictors(lm1.fit),"NUM_COMM_NEXT_24")]
+trainX <- train4b[,-match("NUM_COMM_NEXT_24",colnames(train4b))]
+trainY <- train4$NUM_COMM_NEXT_24
+
+#Do some manual removal
+lm1train.fit <- train(trainX[,!names(trainX) %in% c("LINKS_FIRST_24_AFTER_POST",
+                                                    "LINKS_ADD_24_PREBT_AVG",
+                                                    "LINKS_ADD_24_PREBT_MIN"
+                                                    )]
+                      ,trainY, method = "lm")
+b=coef(lm1train.fit$finalModel);
+b2<-b[-1];b2
+b3 <- data.frame(Coefficients=b2);
+b3$Predictor = rownames(b3)
+b3<- b3 %>% arrange(desc(Coefficients));b3
+
+o <- ggplot(b3,aes(x=reorder(Predictor,Coefficients),y=Coefficients))+
+  geom_col(fill="blue") +
+  xlab("Features") + ggtitle("Impact of Features") + 
+  ylab("Expected Change in Number of Comments") +
+ coord_flip()
+o
+
+#Get Variable Importance
+lm1train.fit.varImp <- varImp(lm1train.fit,scale=FALSE); plot(lm1train.fit.varImp)
+summary(lm1.fit)
+#5.2.2 Log Linear Models Variable Importance
+#Get coefficients
+train4b <- train4[, names(train4) %in% c(predictors(lm1.fit),"NUM_COMM_NEXT_24")]
+trainX <- train4b[,-match("NUM_COMM_NEXT_24",colnames(train4b))]
+trainY <- log(1+train4$NUM_COMM_NEXT_24)
+
+#Do some manual removal
+llm1train.fit <- train(trainX[,!names(trainX) %in% c("LINKS_FIRST_24_AFTER_POST",
+                                                     "LINKS_ADD_24_PREBT_AVG",
+                                                     "LINKS_ADD_24_PREBT_MIN")]
+                       ,trainY, method = "lm")
+
+summary(llm1train.fit)
+
+c=coef(llm1train.fit$finalModel);c
+c2<-c[-1];c2
+c3 <- data.frame(Coefficients=(exp(c2)-1)*100);
+c3$Predictor = rownames(c3)
+c3<- c3 %>% arrange(desc(Coefficients));c3
+
+p <- ggplot(c3,aes(x=reorder(Predictor,Coefficients),y=Coefficients))+
+  geom_col(fill="blue") +
+  xlab("Features") + ggtitle("Impact of Features") + 
+  ylab("Expected % Change in Number of Comments") +
+  scale_y_continuous(breaks=c(seq(-1.5,7.0,0.5))
+                     ,limits=c(-1.6,7.1)) +
+  coord_flip()
+p
+
+#Get Variable Importance
+lm1train.fit.varImp <- varImp(lm1train.fit,scale=FALSE); plot(lm1train.fit.varImp)
+summary(lm1.fit)
+
+#5.2.3 GLM Models Variable Importance
+llm1.varImp <- varImp(llm1.fit,scale=FALSE); plot(llm1.varImp)
+
+#5.2.4 Tree Models Variable Importance
+tree1.varImp <- varImp(tree1.fit,scale=FALSE)
+plot(tree1.varImp)
+
+#5.2.5 Decision Tree
+f=fancyRpartPlot(tree1.fit$finalModel,cex=0.55);f
+
+#5.3 Predictive Performance by Model
+r <- ggplot(data=res_total,aes(x=model_name,y=avg_true_pos,fill=data_name))
+q <- r + geom_col(position="dodge") + 
+  xlab('Model Type') + ylab('Avg. Number of Pred. in Top 10') +
+  scale_fill_discrete(name="Predictors") +
+  ggtitle ('Predictive Performance by Model') +
+  scale_y_continuous(breaks=seq(0,6,0.5),limits=c(0,6))
+q
+#5.4 Calculate proportion of comments over 50 comments
+
+blah <- train$NUM_COMM_NEXT_24 >= 50; blah[1:100]
+s <- sum(blah)/length(train$NUM_COMM_NEXT_24); s
+
+#APPENDIX
+
+
+
